@@ -1,0 +1,10 @@
+{
+  "key.categories.forgeward_travelcam": "Cinematic Travel Camera",
+  "key.forgeward_travelcam.toggle": "Travel camera on / off",
+  "forgeward_travelcam.warning": "Taking damage",
+  "forgeward_travelcam.off.damage": "Travel camera off: you took damage",
+  "forgeward_travelcam.refused": "Travel camera: another camera is in use",
+  "forgeward_travelcam.configuration.title": "Travel Camera",
+  "forgeward_travelcam.configuration.snapBack": "Snap back on damage",
+  "forgeward_travelcam.configuration.snapBack.tooltip": "Return to the normal view when you take damage. Off: the camera stays on and a warning shows instead."
+}
