@@ -36,7 +36,7 @@ import org.slf4j.Logger;
 @Mod(value = TravelCamera.MOD_ID, dist = Dist.CLIENT)
 public final class TravelCamera {
     public static final String MOD_ID = "forgeward_travelcam";
-    public static final String VERSION = "1.0.1";
+    public static final String VERSION = "1.1.4";
     static final Logger LOG = LogUtils.getLogger();
 
     /** A new id on a chord nothing uses (GLFW_KEY_N = 78). The default must never move: players keep the key they had. */
@@ -69,8 +69,9 @@ public final class TravelCamera {
         Minecraft mc = Minecraft.getInstance();
         if (!reported) {
             reported = true;
-            LOG.info("[forgeward_travelcam] {} ready: key {} ({}), shots {}, snap back {}, network channels 0, off until pressed",
-                    VERSION, TOGGLE.saveString(), TOGGLE.getKeyModifier(), Shot.values().length, TravelConfig.SNAP_BACK.get() ? "on" : "off");
+            LOG.info("[forgeward_travelcam] {} ready: key {} ({}), shots {}, snap back {}, vehicle frames [{}], director {} (horse plan API {}), network channels 0, off until pressed",
+                    VERSION, TOGGLE.saveString(), TOGGLE.getKeyModifier(), Shot.values().length, TravelConfig.SNAP_BACK.get() ? "on" : "off", VehicleFrame.Vehicles.loaded().trim(),
+                    TravelConfig.DIRECTOR.get() ? "on" : "off", Plan.available() ? "linked" : "absent");
         }
         while (TOGGLE.consumeClick()) Director.toggle(mc);
         Director.tick(mc);

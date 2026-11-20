@@ -69,6 +69,17 @@ public final class Director {
 
     // the frame
     private static Vec3 eyeNow, follow, look, cam;
+    // The vehicle the rider sits on, its frame as drawn. On one, the followed point lives in that frame (followLocal), so a
+    // follow shot rides with the ship or carriage instead of trailing it through a slow frame. aimVehicle: the shot frames the vehicle,
+    // the rider being shut inside it (user 2026-11-04: an outside shot keeps the rider or the vehicle in frame).
+    private static VehicleFrame vehicle;
+    private static Vec3 followLocal;
+    /** 1b: on a vehicle a follow shot's offset is fixed in the vehicle's frame at the cut. 1a's offset hung off a world heading that
+     *  swung (up to 6 b/s) while the ship yawed under it, and after a slow frame that drift landed at once (cam-1a F: 1-3 block steps). */
+    private static Vec3 offsetLocal;
+    private static boolean aimVehicle;
+    public static int outsideCuts, vehicleAimCuts, tightSkips;
+    private static String cloudBand = "off";
     private static boolean snapFilters;
     private static long lastNanos;
     private static float yawOut, pitchOut;
@@ -83,13 +94,46 @@ public final class Director {
     public static long frames, startedAt, badgesShown, badgesHidden, layersHidden;
     private static final Map<Shot, Integer> counts = new EnumMap<>(Shot.class);
 
-    public static boolean active() { return active; }
+    /** Filming now: on, and not handed back to the player (WASD). The mixins and HUD hooks key off this. */
+    public static boolean active() { return active && !Auto.handedBack(); }
+    /** Toggled on, whether filming or handed back. */
+    public static boolean on() { return active; }
     public static Shot shot() { return shot; }
     public static boolean warningShown() { return active && warn > 0; }
     public static Vec3 frameCam() { return cam; }
     public static float frameYaw() { return yawOut; }
     public static float framePitch() { return pitchOut; }
     public static boolean frameDetached() { return shot != Shot.EYE; }
+    /** The auto director's own time, ms per camera tick this use (for its rig). */
+    /** The Land flags the director reads for a column (1 water, 2 built, 4 tree), or -1 if unknown (for its rig). */
+    public static int directorFlags(net.minecraft.client.multiplayer.ClientLevel level, int x, int z) { Land.tick(level.getGameTime()); return Land.flags(level, x, z); }
+    /** Weight one director kind (1 = as designed): what the good-shot key will tune; the rig uses it to get a fixed shot on demand. */
+    public static void taste(Shot kind, double weight) { Scout.TASTE[Scout.index(kind)] = weight; }
+    /** Why the auto director made the last cut (for its rig). */
+    public static String lastCutWhy() { return Auto.lastWhy; }
+    /** The land kind the director last read at the rider (water, steep, built, ridge, plain; empty before its first read). For its rig. */
+    public static String directorLand() { return Auto.landNow; }
+    /** The lens-leaves check, on as shipped; a test rig's control rides turn it off. */
+    public static void lensLeaves(boolean on) { Sight.lensLeavesOff = !on; }
+    public static int lensRejected() { return Sight.lensRejected; }
+    /** Cuts away from a view blocked at the lens (fp-c0's trunk). */
+    public static int nearCuts;
+    /** {leaf blocks round the lens, leaf blocks on the line to the eye, solid non-leaf blocks on that line} for the shot as it stands
+     *  now; null without a detached shot. */
+    public static int[] leavesNow(net.minecraft.client.multiplayer.ClientLevel level) {
+        if (cam == null || eyeNow == null || shot == Shot.EYE) return null;
+        return new int[] { Sight.leavesAtLens(level, cam, eyeNow), Sight.leavesOnLine(level, cam, eyeNow), Sight.solidOnLine(level, cam, eyeNow) };
+    }
+    /** The rider fully hidden from the shot as it stands now, by the director's own rule (head and body both behind a wall or more than
+     *  one leaf block); false without a detached shot. For the rig's row L. */
+    public static boolean riderHiddenNow(Minecraft mc) {
+        if (cam == null || eyeNow == null || shot == Shot.EYE || mc.player == null) return false;
+        return Auto.hidden(mc, mc.player, cam, eyeNow);
+    }
+    public static int hiddenAllowanceTicks() { return Auto.hiddenTicks(); }
+    public static double directorMsPerTick() { return Auto.msPerTick(); }
+    /** The ground height the director reads for a column, or Integer.MIN_VALUE if unknown (for its rig). */
+    public static int directorGround(net.minecraft.client.multiplayer.ClientLevel level, int x, int z) { Land.tick(level.getGameTime()); return Land.height(level, x, z); }
 
     public static void toggle(Minecraft mc) {
         if (active) off("key", null);
@@ -112,10 +156,14 @@ public final class Director {
         lastHurt = p.hurtTime; lastHealth = p.getHealth(); warn = 0;
         layersHidden = 0;
         cuts = forcedCuts = frameGuards = noShot = slides = swingCapped = guardNoRoom = guardBlocked = guardSpot = guardLong = 0; frames = 0; counts.clear(); lastPicked = null;
+        outsideCuts = vehicleAimCuts = tightSkips = 0; followLocal = null; offsetLocal = null; aimVehicle = false;
+        vehicle = VehicleFrame.Vehicles.of(p); Sight.frame = vehicle; Sight.pt = 1; Sight.ignoreOwn = false;
+        Sight.cloudRejected = 0; cloudBand = Sight.readClouds();
         Sight.clips = 0; Sight.maxClipNanos = 0; Sight.totalClipNanos = 0;
         forcedBlocked = forcedSpot = forcedGuard = forcedFar = 0; age = 0;
         startedAt = System.nanoTime(); eyeNow = null; cam = null; lastNanos = 0;
         measureOpenness(mc.level, p);
+        Auto.reset();
         cut(mc, p, false);
         riding = p.getVehicle() == null ? "nothing" : p.getVehicle().getType().getDescriptionId();
         ridden = 0; topSpeed = 0;
@@ -132,9 +180,11 @@ public final class Director {
         mc.levelRenderer.needsUpdate();
         if (say != null && mc.player != null) mc.getChatListener().handleSystemMessage(Component.translatable(say), true);
         double secs = (System.nanoTime() - startedAt) / 1e9;
-        TravelCamera.LOG.info(String.format(Locale.ROOT, "[forgeward_travelcam] off (%s): %.1f s, riding %s, moved %.0f blocks, top speed %.1f b/s, %d frames, cuts %d (forced %d: view blocked %d, spot lost %d, frame guard %d, far %d), shots %s, no clear shot %d, slides %d, swing capped %d ticks, other HUD layers skipped %d, frame guards %d (no room %d, long step blocked %d, step over 3 %d, spot %d), wall rays %d (avg %.1f us, max %.1f us)",
+        TravelCamera.LOG.info(String.format(Locale.ROOT, "[forgeward_travelcam] off (%s): %.1f s, riding %s, moved %.0f blocks, top speed %.1f b/s, %d frames, cuts %d (forced %d: view blocked %d, spot lost %d, frame guard %d, far %d), shots %s, no clear shot %d, slides %d, swing capped %d ticks, other HUD layers skipped %d, frame guards %d (no room %d, long step blocked %d, step over 3 %d, spot %d), wall rays %d (avg %.1f us, max %.1f us), on a vehicle: outside cuts %d, aimed at the vehicle %d, close shots too tight %d, cloud band %s: cloud rejected %d",
                 why, secs, riding, ridden, topSpeed, frames, cuts, forcedCuts, forcedBlocked, forcedSpot, forcedGuard, forcedFar, counts, noShot, slides, swingCapped, layersHidden, frameGuards, guardNoRoom, guardBlocked, guardLong, guardSpot, Sight.clips,
-                Sight.clips == 0 ? 0 : Sight.totalClipNanos / 1e3 / Sight.clips, Sight.maxClipNanos / 1e3));
+                Sight.clips == 0 ? 0 : Sight.totalClipNanos / 1e3 / Sight.clips, Sight.maxClipNanos / 1e3, outsideCuts, vehicleAimCuts, tightSkips, cloudBand, Sight.cloudRejected));
+        vehicle = null; Sight.frame = null; Sight.ignoreOwn = false;
+        TravelCamera.LOG.info("[forgeward_travelcam] off (" + why + "): " + Auto.report());
     }
 
     public static void tick(Minecraft mc) {
@@ -147,6 +197,13 @@ public final class Director {
         // Screens keep their own view of chat and the hotbar; in play the HUD stays hidden whatever F1 did
         mc.options.hideGui = mc.screen == null;
         motion(p);
+        // WASD during a planned ride hands the view back; on resume, a chase shot
+        int taken = Auto.takeover(mc, p);
+        if (taken == 1) { mc.options.hideGui = oldHideGui; return; }
+        if (taken == 2) { eyeNow = p.getEyePosition(); lastNanos = 0; cut(mc, p, false); return; }
+        VehicleFrame v = VehicleFrame.Vehicles.of(p);
+        if (v == null ? vehicle != null : vehicle == null || !v.same(vehicle)) { snapFilters = true; followLocal = null; if (offsetLocal != null || aimVehicle) forceCut = true; offsetLocal = null; }
+        vehicle = v; Sight.frame = v;
         if (danger(mc, p)) return;
         if (warn > 0) warn--;
         if (p.tickCount % 20 == 0) measureOpenness(mc.level, p);
@@ -161,21 +218,26 @@ public final class Director {
             boolean fluidOk = p.isUnderWater();
             double max = maxHorizontal(mc);
             if (!Sight.spot(mc.level, p, cam, max, fluidOk)) {
-                if (fixed != null || !Sight.clear(mc.level, p, cam, eyeNow) || !slideTo(mc, p, max, fluidOk)) { forcedSpot++; forced(mc, p); return; }
-            } else if (Sight.clear(mc.level, p, cam, eyeNow)) {
+                // on a vehicle a shot never slides in along the hull: it cuts (user 2026-11-09: too tight cuts to an outside shot)
+                if (fixed != null || vehicle != null || !Sight.clear(mc.level, p, cam, target()) || !slideTo(mc, p, max, fluidOk)) { forcedSpot++; forced(mc, p); return; }
+            } else if (Sight.clear(mc.level, p, cam, target())) {
                 blocked = 0;
                 // ease back out once there's room, a little at a time; the frame stops it at any wall
-                if (fixed == null && rayPull < 1) {
+                if (fixed == null && vehicle == null && rayPull < 1) {
                     double out = Math.min(1, rayPull * 1.15);
                     Vec3 at = offsetAt(eyeNow, out);
                     if (Sight.spot(mc.level, p, at, max, fluidOk) && Sight.clear(mc.level, p, at, eyeNow)) rayPull = out;
                 }
             } else {
                 blocked += CHECK_EVERY;
-                if (blocked >= BLOCKED_TICKS) { forcedBlocked++; forced(mc, p); return; }
+                // Under the plan a blocked view had 3 s, and a trunk that swung in front of a chase shot filled the frame for
+                // all of it; one at the lens now cuts as fast as without the plan
+                boolean near = Auto.running() && Sight.nearBlocked(mc.level, cam, target());
+                if (blocked >= (Auto.running() && !near ? 60 : BLOCKED_TICKS)) { forcedBlocked++; if (near) nearCuts++; forced(mc, p); return; }
             }
         }
-        if (age >= length) cut(mc, p, false);
+        String due = Auto.due(mc, p, age, length, shot, fixed, eyeNow, heading, speed, straight, openness);
+        if (due != null) { if (due.startsWith("!")) { forcedBlocked++; forced(mc, p); } else cut(mc, p, false); }
     }
 
     /** A follow shot that lost its place or its view: closer along its own line, if that helps. False = it can't, so it cuts. */
@@ -206,10 +268,12 @@ public final class Director {
     /** Called from Camera.setup's TAIL each frame while active. False leaves the camera as it was: not the player's camera. */
     public static boolean frame(Entity entity, Vec3 eye) {
         Minecraft mc = Minecraft.getInstance();
-        if (!active || entity != mc.player) return false;
+        if (!active || Auto.handedBack() || entity != mc.player) return false;
         long now = System.nanoTime();
         double dt = lastNanos == 0 ? 0 : Math.min(0.1, (now - lastNanos) / 1e9);
         lastNanos = now;
+        float pt = mc.getTimer().getGameTimeDeltaPartialTick(false);
+        Sight.pt = pt;
         // the rider jumped (a teleport): the smoothing mustn't drag the shot across the gap frame by frame
         if (eyeNow != null && eye.distanceToSqr(eyeNow) > TELEPORT * TELEPORT) snapFilters = true;
         eyeNow = eye;
@@ -219,17 +283,30 @@ public final class Director {
             yawOut = p.getYRot(); pitchOut = p.getXRot(); follow = eye; look = eye; snapFilters = false; frames++;
             return true;
         }
-        if (snapFilters || follow == null) { follow = eye; look = eye; snapFilters = false; }
         double a = 1 - Math.exp(-dt / shot.tau), ay = 1 - Math.exp(-dt / (shot.tau * 2));
-        follow = new Vec3(follow.x + (eye.x - follow.x) * a, follow.y + (eye.y - follow.y) * ay, follow.z + (eye.z - follow.z) * a);
+        if (vehicle != null) {
+            // in the vehicle's frame a seated rider's eye stands still: the smoothing has nothing to trail, through any slow frame
+            Vec3 want0 = aimVehicle ? vehicle.centreLocal() : vehicle.toLocal(eye, pt);
+            if (snapFilters || followLocal == null) { followLocal = want0; snapFilters = false; }
+            followLocal = new Vec3(followLocal.x + (want0.x - followLocal.x) * a, followLocal.y + (want0.y - followLocal.y) * ay, followLocal.z + (want0.z - followLocal.z) * a);
+            follow = vehicle.toWorld(followLocal, pt);
+        } else {
+            if (snapFilters || follow == null) { follow = eye; look = eye; snapFilters = false; }
+            follow = new Vec3(follow.x + (eye.x - follow.x) * a, follow.y + (eye.y - follow.y) * ay, follow.z + (eye.z - follow.z) * a);
+        }
         look = follow;
         Vec3 want;
-        if (fixed != null) { want = fixed; look = eye; }
+        if (fixed != null) { want = fixed; look = aimVehicle && vehicle != null ? vehicle.toWorld(vehicle.centreLocal(), pt) : eye; }
         else {
-            double h = shotHeadingO + Mth.wrapDegrees(Math.toDegrees(shotHeading - shotHeadingO)) * Math.PI / 180 * mc.getTimer().getGameTimeDeltaPartialTick(false);
-            double fx = -Math.sin(h), fz = Math.cos(h);          // MC yaw 0 faces +z
-            double ox = -fx * back - fz * side, oz = -fz * back + fx * side;
-            want = slid(mc.level, mc.player, ox, oz, dt);
+            if (vehicle != null && offsetLocal != null) {
+                want = vehicle.toWorld(followLocal.add(offsetLocal), pt);
+                if (Sight.nearSolid(mc.level, want)) { guardNoRoom++; want = null; }   // against the hull: the next tick cuts, no slide in
+            } else {
+                double h = shotHeadingO + Mth.wrapDegrees(Math.toDegrees(shotHeading - shotHeadingO)) * Math.PI / 180 * mc.getTimer().getGameTimeDeltaPartialTick(false);
+                double fx = -Math.sin(h), fz = Math.cos(h);          // MC yaw 0 faces +z
+                double ox = -fx * back - fz * side, oz = -fz * back + fx * side;
+                want = slid(mc.level, mc.player, ox, oz, dt);
+            }
         }
         // the guard: nowhere left to slide, or a world point a block appeared at. Hold the last good place; the next tick cuts
         if ((want == null || Sight.nearSolid(mc.level, want) || Sight.touching(mc.level, mc.player, want)) && cam != null) {
@@ -251,6 +328,7 @@ public final class Director {
         if (next > pull && Sight.nearSolid(level, follow.add(ox * next, upBy * next, oz * next))) next = pull;   // stop short, no hunting at a wall
         pull = next;
         if (!Sight.nearSolid(level, follow.add(ox * pull, upBy * pull, oz * pull))) return follow.add(ox * pull, upBy * pull, oz * pull);
+        if (vehicle != null) { guardNoRoom++; return null; }     // against the hull: the next tick cuts, no slide in
         double min = minPull(), bad = pull, good = -1;
         for (double f = pull * 0.9; f >= min; f *= 0.9) {
             if (!Sight.nearSolid(level, follow.add(ox * f, upBy * f, oz * f))) { good = f; break; }
@@ -356,24 +434,52 @@ public final class Director {
         double max = maxHorizontal(mc);
 
         shotHeading = shotHeadingO = heading;
-        List<Shot> order = order(wasForced);
+        aimVehicle = false; Sight.ignoreOwn = false;
         int tried = 0;
         Shot picked = null;
+        // The auto director's picks first, while the horse has a live plan; its hard checks are the same as the picker's
+        List<Scout.Pick> picks = Auto.candidates(mc, p, eye, heading, speed, straight, openness);
+        boolean resume = Auto.wantsChase();   // after a hand-back: chase only (the director's, then our own), else close behind the head
+        if (picks != null) {
+            for (Scout.Pick k : picks) {
+                if (resume && k.kind() != Shot.CHASE) continue;
+                if (tried >= BUDGET + 2) break;   // the director's checks are stricter (leaves), so it gets two more tries
+                tried++;
+                fixed = k.fixed(); back = k.back(); side = k.side(); upBy = k.up();
+                Vec3 at = fixed != null ? fixed : relative(eye);
+                boolean ok = Sight.spot(level, p, at, max, fluidOk) && Sight.framed(level, p, at, eye)
+                        && Sight.leavesOnLine(level, at, eye) <= 1 && Sight.leavesOnLine(level, at, eye.add(0, -1.1, 0)) <= 1
+                        && !Sight.leafyLens(level, at, eye) && holds(level, p, at, eye);
+                Auto.attempt(k.kind(), ok);
+                if (ok) {
+                    picked = k.kind();
+                    Auto.chosen(k, age, wasForced, tried);
+                    break;
+                }
+            }
+        }
+        boolean director = picked != null;
+        List<Shot> order = director ? List.of() : resume ? List.of(Shot.CHASE) : order(wasForced);
+        if (!director) tried = 0;   // the picker keeps its own budget
         outer:
         for (Shot s : order) {
             for (int tries = 0; tries < 2 && tried < BUDGET; tries++) {
                 tried++;
                 place(s, level, p, eye);
                 Vec3 at = fixed != null ? fixed : relative(eye);
-                if (Sight.spot(level, p, at, max, fluidOk) && Sight.framed(level, p, at, eye) && holds(level, p, at, eye)) { picked = s; break outer; }
+                // with the director running, its fall-back is as clean as its own picks; picks == null (director off, no plan) is 1.0.1
+                if (Sight.spot(level, p, at, max, fluidOk) && onVehicleOk(s, at) && Sight.framed(level, p, at, eye) && (picks == null || Sight.leavesOnLine(level, at, eye) <= 1 && !Sight.leafyLens(level, at, eye)) && holds(level, p, at, eye)) { picked = s; break outer; }
             }
         }
+        if (picked == null && vehicle != null) picked = vehicleShot(level, p, max, fluidOk);
         if (picked == null) {
-            // close behind the head, shorter each try, then the eye itself: never a shot inside a wall
+            // close behind the head, shorter each try, then the eye itself: never a shot inside a wall. On a vehicle only with a block
+            // of room from its hull: too tight there cuts to an outside shot, tried just above (user 2026-11-09)
             double[] pulls = { 3, 2, 1.4 };
             for (double d : pulls) {
                 fixed = null; back = d; side = 0; upBy = 0.4;
                 Vec3 at = relative(eye);
+                if (!Sight.roomy(at)) { tightSkips++; continue; }
                 if (Sight.spot(level, p, at, max, fluidOk) && Sight.clear(level, p, at, eye)) { picked = Shot.PULLED_IN; break; }
             }
             if (picked == null) {
@@ -382,16 +488,62 @@ public final class Director {
                 noShot++;
             }
         }
+        if (resume) TravelCamera.LOG.info("[forgeward_travelcam] director: resumed on " + picked + " ("
+                + (director ? "the director's chase" : picked == Shot.CHASE ? "own chase" : "no chase fitted") + ")");
+        if (!director) Auto.notChosen(age, wasForced, picks != null && !picks.isEmpty(), picked);
         cuts++;
+        if (vehicle != null && picked != Shot.EYE && picked != Shot.PULLED_IN) outsideCuts += picked == Shot.CLOSE ? 0 : 1;
         lastCutForced = wasForced; lastShotTicks = age;
         shot = picked; nextRetry = RETRY;
         if (picked != Shot.EYE && picked != Shot.PULLED_IN) lastPicked = picked;
         counts.merge(picked, 1, Integer::sum);
         age = 0; sinceCheck = 0; blocked = 0; forceCut = false; snapFilters = true; pull = 1; rayPull = 1;
         length = CUT_MIN + RND.nextInt(CUT_MAX - CUT_MIN + 1);
-        cam = fixed != null ? fixed : relative(eye);
+        followLocal = null; offsetLocal = null;
+        Vec3 base = aimVehicle ? target() : eye;
+        cam = fixed != null ? fixed : relative(base);
+        if (vehicle != null && fixed == null && picked != Shot.EYE) offsetLocal = vehicle.toLocal(cam, Sight.pt).subtract(vehicle.toLocal(base, Sight.pt));
         // the section graph only rebuilds when the camera moves far or turns: an instant cut can leave terrain undrawn (PANO8)
         mc.levelRenderer.needsUpdate();
+    }
+
+    /** The point the shot frames: the rider's eye, or the vehicle's middle for a shot aimed at the vehicle. */
+    private static Vec3 target() {
+        if (aimVehicle && vehicle != null) return vehicle.toWorld(vehicle.centreLocal(), Sight.pt);
+        return eyeNow != null ? eyeNow : Minecraft.getInstance().player.getEyePosition();
+    }
+
+    /** On a vehicle: a close shot needs a block of room from the hull; every other follow shot, and trackside, stands outside
+     *  the hull's box, 1.5 blocks clear. A shot that only fits tight against the ship or inside the carriage isn't taken. */
+    private static boolean onVehicleOk(Shot s, Vec3 at) {
+        if (vehicle == null) return true;
+        if (s == Shot.CLOSE) { boolean ok = Sight.roomy(at); if (!ok) tightSkips++; return ok; }
+        return vehicle.outside(at, Sight.pt, 1.5);
+    }
+
+    /** No shot of the rider fits: frame the vehicle itself from outside (the rider shut in a cabin or a carriage). Distances grow with
+     *  the vehicle's size. Its own blocks don't block this view; terrain still does. */
+    private static Shot vehicleShot(ClientLevel level, LocalPlayer p, double max, boolean fluidOk) {
+        double r = vehicle.radius();
+        Vec3 centre = vehicle.toWorld(vehicle.centreLocal(), Sight.pt);
+        Sight.ignoreOwn = true;
+        try {
+            for (Shot s : List.of(Shot.CHASE, Shot.WIDE, Shot.OVERHEAD, Shot.TRACKSIDE)) {
+                for (int tries = 0; tries < 2; tries++) {
+                    place(s, level, p, centre);
+                    if (fixed == null) {
+                        double d = Math.sqrt(back * back + side * side + upBy * upBy), want = r + (s == Shot.CHASE ? 6 : 10);
+                        if (d < want) { double k = want / Math.max(0.1, d); back *= k; side *= k; upBy = Math.max(upBy * k, s == Shot.OVERHEAD ? r + 12 : 2); }
+                    }
+                    Vec3 at = fixed != null ? fixed : relative(centre);
+                    if (Sight.spot(level, p, at, max, fluidOk) && vehicle.outside(at, Sight.pt, 1.5) && Sight.clear(level, p, at, centre)) {
+                        aimVehicle = true; vehicleAimCuts++;
+                        return s;
+                    }
+                }
+            }
+        } finally { Sight.ignoreOwn = aimVehicle; }
+        return null;
     }
 
     /** Will this shot still stand in 1.5 s? Where the rider will be if they keep going, the height following the ground on land. A shot

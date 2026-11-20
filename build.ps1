@@ -21,7 +21,7 @@ if (-not ((Test-Path $CLIENT_SRG) -and (Test-Path $CLIENT_NF))) { throw "client 
 
 $BUILD  = Join-Path $PROJ "build"
 $OUT    = Join-Path $BUILD "classes"
-$JAROUT = Join-Path $PROJ "forgeward_travelcam-1.0.1.jar"
+$JAROUT = Join-Path $PROJ "forgeward_travelcam-1.1.4.jar"
 if (Test-Path $BUILD) { Remove-Item -Recurse -Force $BUILD }
 New-Item -ItemType Directory -Force -Path $OUT | Out-Null
 
@@ -32,6 +32,14 @@ function Need($subdir, $pattern) {
     return $hit.FullName
 }
 
+# Sable and Create are OPTIONAL at runtime (SableFrame / ContraptionFrame load only when the mod is present);
+# compile only. Sable's API extends its jar-in-jar companion, pulled out of its jar.
+$MODS = Join-Path $SERVER "mods"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$COMP = Join-Path $PROJ "clientlibs\sable-companion-common-1.21.1-1.6.0.jar"
+if (-not (Test-Path $COMP)) { New-Item -ItemType Directory -Force (Split-Path $COMP) | Out-Null; $sj = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $MODS "sable-neoforge-1.21.1-2.0.5.jar")); try { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($sj.GetEntry("META-INF/jarjar/sable-companion-common-1.21.1-1.6.0.jar"), $COMP, $true) } finally { $sj.Dispose() } }
+$ROUTES = (Get-ChildItem $MODS -Filter "forgeward_routes-*.jar" | Sort-Object Name -Descending | Select-Object -First 1).FullName   # HorsePlan, compile-only, read behind ModList.isLoaded
+$OPTIONAL = @($COMP, $ROUTES, (Join-Path $MODS "sable-neoforge-1.21.1-2.0.5.jar"), (Join-Path $MODS "create-1.21.1-6.0.10.jar"))
 $CP = @(
     $CLIENT_NF, $CLIENT_SRG,
     (Join-Path $NF "neoforge-$NFV-universal.jar"),
@@ -50,7 +58,8 @@ $CP = @(
     (Need "io\netty\netty-buffer" "netty-buffer-*.jar"),
     (Need "io\netty\netty-common" "netty-common-*.jar"),
     (Join-Path $LIB "net\fabricmc\sponge-mixin\0.15.2+mixin.0.8.7\sponge-mixin-0.15.2+mixin.0.8.7.jar")
-) -join ";"
+) + $OPTIONAL
+$CP = $CP -join ";"
 
 Write-Host "[1/2] javac (Java 21) ..."
 $SRC = @(Get-ChildItem -Recurse -Filter *.java (Join-Path $PROJ "src\main\java") | ForEach-Object { $_.FullName })

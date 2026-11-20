@@ -19,6 +19,24 @@ Designed by DuskyTheDolphin, written with AI assistance.
   warning shows instead.
 - It refuses to start, or turns itself off, when another mod has taken over the camera.
 
+## Auto director on guided horse rides (optional, with Horse Routes)
+
+When the horse you ride follows a plan from **Horse Routes** (auto-ride or a recorded route), the camera reads the
+land along the plan ahead and picks the shot: a chase on plain ground, high wide and overhead shots over hills, drops,
+water and buildings, and spots the rider rides toward or away from. Shots last 6 to 20 seconds and change when the
+land does. Press W, A, S or D to get the normal view back at once; it picks up again on a chase shot a second after
+you let go. Without Horse Routes, or with the option off, shots are picked as described above.
+
+## Known limits
+
+- Dense, steep woods make it cut more often: a shot that runs into a slope or a trunk cuts away at once.
+- Leaves can drift into a running shot; a high shot that ends up looking through a canopy cuts within about 2 seconds
+  if you're hidden.
+- On a guided ride, wide and overhead shots take a bit more than half of the time.
+- The "picked up an item" notices are still drawn over the shot.
+- Only a horse following a Horse Routes plan gets director shots; walking, boats, trains and airships use the normal
+  cycle of shots.
+
 ## Install
 
 On the **client** only. Servers don't need it, and it sends nothing to the server: no network channels, and your
@@ -32,6 +50,7 @@ player stays exactly where it is.
 
 None of these are needed. With them installed, the camera handles them:
 
+- **Horse Routes**: the auto director on guided horse rides (above).
 - **Shoulder Surfing Reloaded** (checked with 5.1.1): the travel camera applies its shot after Shoulder Surfing's own
   camera, so the two don't fight.
 - **Icy's Better Horses** (checked with 2.1.4): its horse badges (ability banners, harness gauge and shield) ignore
@@ -48,6 +67,7 @@ None of these are needed. With them installed, the camera handles them:
 | Key | Default | Meaning |
 |---|---|---|
 | `snapBack` | `true` | Return to the normal view when you take damage. `false`: the camera stays on and a warning shows instead. |
+| `director` | `true` | When a horse is riding a Horse Routes plan, choose shots from the land ahead. `false`: shots are picked as without it. |
 
 ## Log lines
 
