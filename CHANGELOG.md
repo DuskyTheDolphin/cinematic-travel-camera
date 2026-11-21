@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.4
+## 1.1.5
 - New: an auto director for guided horse rides (needs Horse Routes; optional). It reads the land ahead and picks the
   shot: a chase on plain ground, high wide and overhead shots over hills, drops, water and buildings, and spots the
   rider rides toward or away from. Shots last 6 to 20 seconds and change when the land does.
@@ -11,7 +11,8 @@
 - Shots crowded with leaves, tall grass or flowers aren't chosen.
 - New option: **Auto director on rides** (on by default). Your existing settings and key binding carry over.
 - Without Horse Routes nothing changes except the cleaner shot checks above.
-- (1.1.0 to 1.1.3 were unreleased test versions.)
+- Without Icy's Better Horses installed, the log no longer shows a mixin warning about its badge class (the hook is skipped).
+- (1.1.0 to 1.1.4 were unreleased test versions.)
 
 ## 1.0.4
 - Smooth on moving airships (Sable / Create Aeronautics) and Create trains: follow shots now ride with the vehicle

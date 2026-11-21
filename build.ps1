@@ -21,7 +21,7 @@ if (-not ((Test-Path $CLIENT_SRG) -and (Test-Path $CLIENT_NF))) { throw "client 
 
 $BUILD  = Join-Path $PROJ "build"
 $OUT    = Join-Path $BUILD "classes"
-$JAROUT = Join-Path $PROJ "forgeward_travelcam-1.1.4.jar"
+$JAROUT = Join-Path $PROJ "forgeward_travelcam-1.1.5.jar"
 if (Test-Path $BUILD) { Remove-Item -Recurse -Force $BUILD }
 New-Item -ItemType Directory -Force -Path $OUT | Out-Null
 

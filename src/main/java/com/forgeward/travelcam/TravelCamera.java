@@ -36,7 +36,7 @@ import org.slf4j.Logger;
 @Mod(value = TravelCamera.MOD_ID, dist = Dist.CLIENT)
 public final class TravelCamera {
     public static final String MOD_ID = "forgeward_travelcam";
-    public static final String VERSION = "1.1.4";
+    public static final String VERSION = "1.1.5";
     static final Logger LOG = LogUtils.getLogger();
 
     /** A new id on a chord nothing uses (GLFW_KEY_N = 78). The default must never move: players keep the key they had. */

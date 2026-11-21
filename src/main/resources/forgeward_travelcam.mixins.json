@@ -2,6 +2,7 @@
   "required": true,
   "minVersion": "0.8",
   "package": "com.forgeward.travelcam.mixin",
+  "plugin": "com.forgeward.travelcam.mixin.Plugin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [],
   "client": [
