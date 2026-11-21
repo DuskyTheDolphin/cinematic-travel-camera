@@ -6,6 +6,14 @@ steer. Only the view changes; press the key again and you are back to normal.
 
 Designed by DuskyTheDolphin, written with AI assistance.
 
+![A chase shot behind a rider on a road through a cherry grove, then a cut to an overhead shot](media/chase-cut-overhead.gif)
+
+*Chase, then a cut to overhead, on a guided horse ride (played at 2x speed).*
+
+![The camera waits beside a village road as the rider comes past, then watches them ride away](media/roadside.gif)
+
+*Trackside: the camera waits by the road, then watches the rider go (2x speed).*
+
 ## Using it
 
 - **Ctrl+N** turns the camera on and off (Controls > Cinematic Travel Camera, rebindable).
